@@ -1,45 +1,75 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from app.data.schemas import LoginRequest, TokenResponse, UserAuth
-from app.core.security import create_access_token, get_password_hash, verify_password
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
 
-# Import the new history router we just created
-from app.api.v1.history import router as history_router
+from app.core.database import get_db
+from app.core.security import get_password_hash
+from app.data.models import TelemetryRecord, SensorRecord, Operator
 
 router = APIRouter()
 
-# Mock authorized user store for initial development
-USERS_DB = {
-    "operator": {
-        "password_hash": get_password_hash("operator123"),
-        "role": "Operator"
-    },
-    "engineer": {
-        "password_hash": get_password_hash("engineer123"),
-        "role": "Investigator"
-    }
-}
+class OperatorCreate(BaseModel):
+    username: str
+    password: str
 
-@router.post("/auth/login", response_model=TokenResponse)
-async def login(credentials: LoginRequest):
-    user_record = USERS_DB.get(credentials.username)
-    if not user_record or not verify_password(credentials.password, user_record["password_hash"]):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password"
-        )
+@router.get("/telemetry/recent")
+async def get_recent_telemetry(limit: int = 50, db: AsyncSession = Depends(get_db)):
+    """Fetches the most recent telemetry frames and associated sensors for the live dashboard."""
+    query = (
+        select(TelemetryRecord)
+        .options(selectinload(TelemetryRecord.sensors))
+        .order_by(TelemetryRecord.timestamp.desc())
+        .limit(limit)
+    )
     
-    access_token = create_access_token(
-        data={"sub": credentials.username, "role": user_record["role"]}
-    )
-    return TokenResponse(
-        access_token=access_token,
-        token_type="bearer",
-        user=UserAuth(username=credentials.username, role=user_record["role"])
-    )
+    result = await db.execute(query)
+    records = result.scalars().all()
+    
+    if not records:
+        return []
+        
+    return records
 
-@router.get("/health")
-async def health_check():
-    return {"status": "ONLINE", "system": "Industrial Guardian", "version": "0.1.0"}
+@router.post("/telemetry/ingest", status_code=201)
+async def ingest_telemetry(payload: dict, db: AsyncSession = Depends(get_db)):
+    """Ingests a new frame of simulated or live sensor data from industrial machines."""
+    try:
+        new_record = TelemetryRecord(
+            plant_health=payload.get("plant_health", 100.0),
+            active_anomalies=payload.get("active_anomalies", 0),
+            ai_evidence=payload.get("ai_evidence", [])
+        )
+        db.add(new_record)
+        await db.flush() 
 
-# Attach the history endpoints to the main API router
-router.include_router(history_router, prefix="/history", tags=["Historical Audit"])
+        sensors_data = payload.get("sensors", [])
+        for s_data in sensors_data:
+            new_sensor = SensorRecord(
+                telemetry_id=new_record.id,
+                sensor_id=s_data.get("sensor_id"),
+                subsystem=s_data.get("subsystem"),
+                value=s_data.get("value"),
+                unit=s_data.get("unit"),
+                status=s_data.get("status", "OK")
+            )
+            db.add(new_sensor)
+
+        await db.commit()
+        return {"status": "success", "record_id": new_record.id}
+    
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/operator/register", status_code=201)
+async def register_operator(payload: OperatorCreate, db: AsyncSession = Depends(get_db)):
+    """Creates a new operator account for the dashboard."""
+    new_operator = Operator(
+        username=payload.username,
+        password_hash=get_password_hash(payload.password)
+    )
+    db.add(new_operator)
+    await db.commit()
+    return {"status": "success", "username": new_operator.username}

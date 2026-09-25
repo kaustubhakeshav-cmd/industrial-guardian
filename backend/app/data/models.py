@@ -3,6 +3,13 @@ from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from app.core.database import Base
 
+class Operator(Base):
+    __tablename__ = "operators"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True, nullable=False)
+    password_hash = Column(String, nullable=False)
+
 class TelemetryRecord(Base):
     __tablename__ = "telemetry_records"
 
