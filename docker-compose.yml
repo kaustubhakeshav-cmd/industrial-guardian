@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  # 1. PostgreSQL Database Service
+  db:
+    image: postgres:15-alpine
+    container_name: ig_database
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      # Replace YOUR_PASSWORD_HERE with the password in your .env file
+      POSTGRES_PASSWORD: YOUR_PASSWORD_HERE
+      POSTGRES_DB: industrial_guardian
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # 2. FastAPI Backend Service
+  backend:
+    build: 
+      context: ./backend
+    container_name: ig_backend
+    restart: always
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    env_file:
+      - ./backend/.env
+    # Override localhost in the container to point to the db service
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:YOUR_PASSWORD_HERE@db:5432/industrial_guardian
+
+  # 3. React Frontend Service
+  frontend:
+    build:
+      context: ./frontend
+    container_name: ig_frontend
+    restart: always
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    environment:
+      - CHOKIDAR_USEPOLLING=true # Helps with hot-reloading in Windows containers
+
+volumes:
+  postgres_data:

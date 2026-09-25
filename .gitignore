@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+venv/
+.venv/
+
+# Node
+node_modules/
+frontend/dist/
+*.local
+
+# Datasets & ML artifacts
+data/hai/*.csv
+models/checkpoints/*.pt
+models/checkpoints/*.onnx
+experiments/results/*.json
+
+# OS & Editors
+.vscode/
+.DS_Store
+Thumbs.db
